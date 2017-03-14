@@ -8,6 +8,8 @@
     :copyright: (c) 2014 by Armin Ronacher.
     :license: BSD, see LICENSE for more details.
 """
+import os
+
 import pytest
 
 import pickle
@@ -18,8 +20,8 @@ from werkzeug._compat import iteritems
 from tests import strict_eq
 
 from werkzeug import wrappers
-from werkzeug.exceptions import SecurityError
-from werkzeug.wsgi import LimitedStream
+from werkzeug.exceptions import SecurityError, RequestedRangeNotSatisfiable
+from werkzeug.wsgi import LimitedStream, wrap_file
 from werkzeug.datastructures import MultiDict, ImmutableOrderedMultiDict, \
     ImmutableList, ImmutableTypeConversionDict, CharsetAccept, \
     MIMEAccept, LanguageAccept, Accept, CombinedMultiDict
@@ -539,6 +541,83 @@ def test_etag_response_mixin():
     assert response.content_length == 999
 
 
+def test_range_request_basic():
+    env = create_environ()
+    response = wrappers.Response('Hello World')
+    env['HTTP_RANGE'] = 'bytes=0-4'
+    response.make_conditional(env, accept_ranges=True, complete_length=11)
+    assert response.status_code == 206
+    assert response.headers['Accept-Ranges'] == 'bytes'
+    assert response.headers['Content-Range'] == 'bytes 0-4/11'
+    assert response.headers['Content-Length'] == '5'
+    assert response.data == b'Hello'
+
+
+def test_range_request_out_of_bound():
+    env = create_environ()
+    response = wrappers.Response('Hello World')
+    env['HTTP_RANGE'] = 'bytes=6-666'
+    response.make_conditional(env, accept_ranges=True, complete_length=11)
+    assert response.status_code == 206
+    assert response.headers['Accept-Ranges'] == 'bytes'
+    assert response.headers['Content-Range'] == 'bytes 6-10/11'
+    assert response.headers['Content-Length'] == '5'
+    assert response.data == b'World'
+
+
+def test_range_request_with_file():
+    env = create_environ()
+    resources = os.path.join(os.path.dirname(__file__), 'res')
+    fname = os.path.join(resources, 'test.txt')
+    with open(fname, 'rb') as f:
+        fcontent = f.read()
+    with open(fname, 'rb') as f:
+        response = wrappers.Response(wrap_file(env, f))
+        env['HTTP_RANGE'] = 'bytes=0-0'
+        response.make_conditional(env, accept_ranges=True, complete_length=len(fcontent))
+        assert response.status_code == 206
+        assert response.headers['Accept-Ranges'] == 'bytes'
+        assert response.headers['Content-Range'] == 'bytes 0-0/%d' % len(fcontent)
+        assert response.headers['Content-Length'] == '1'
+        assert response.data == fcontent[:1]
+
+
+def test_range_request_with_complete_file():
+    env = create_environ()
+    resources = os.path.join(os.path.dirname(__file__), 'res')
+    fname = os.path.join(resources, 'test.txt')
+    with open(fname, 'rb') as f:
+        fcontent = f.read()
+    with open(fname, 'rb') as f:
+        fsize = os.path.getsize(fname)
+        response = wrappers.Response(wrap_file(env, f))
+        env['HTTP_RANGE'] = 'bytes=0-%d' % (fsize - 1)
+        response.make_conditional(env, accept_ranges=True,
+                                  complete_length=fsize)
+        assert response.status_code == 200
+        assert response.headers['Accept-Ranges'] == 'bytes'
+        assert 'Content-Range' not in response.headers
+        assert response.headers['Content-Length'] == str(fsize)
+        assert response.data == fcontent
+
+
+def test_range_request_without_complete_length():
+    env = create_environ()
+    response = wrappers.Response('Hello World')
+    env['HTTP_RANGE'] = 'bytes=-'
+    response.make_conditional(env, accept_ranges=True, complete_length=None)
+    assert response.status_code == 200
+    assert response.data == b'Hello World'
+
+
+def test_invalid_range_request():
+    env = create_environ()
+    response = wrappers.Response('Hello World')
+    env['HTTP_RANGE'] = 'bytes=-'
+    with pytest.raises(RequestedRangeNotSatisfiable):
+        response.make_conditional(env, accept_ranges=True, complete_length=11)
+
+
 def test_etag_response_mixin_freezing():
     class WithFreeze(wrappers.ETagResponseMixin, wrappers.BaseResponse):
         pass
@@ -671,17 +750,25 @@ def test_shallow_mode():
 
 
 def test_form_parsing_failed():
-    data = (
-        b'--blah\r\n'
-    )
-    data = wrappers.Request.from_values(
+    data = b'--blah\r\n'
+    request = wrappers.Request.from_values(
         input_stream=BytesIO(data),
         content_length=len(data),
         content_type='multipart/form-data; boundary=foo',
         method='POST'
     )
-    assert not data.files
-    assert not data.form
+    assert not request.files
+    assert not request.form
+
+    # Bad Content-Type
+    data = b'test'
+    request = wrappers.Request.from_values(
+        input_stream=BytesIO(data),
+        content_length=len(data),
+        content_type=', ',
+        method='POST'
+    )
+    assert not request.form
 
 
 def test_file_closing():

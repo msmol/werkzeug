@@ -143,6 +143,7 @@ def test_environ_builder_basics():
     assert b.content_type == 'application/x-www-form-urlencoded'
     b.files.add_file('test', BytesIO(b'test contents'), 'test.txt')
     assert b.files['test'].content_type == 'text/plain'
+    b.form['test_int'] = 1
     assert b.content_type == 'multipart/form-data'
 
     req = b.get_request()
@@ -154,6 +155,34 @@ def test_environ_builder_basics():
     assert req.files['test'].content_type == 'text/plain'
     strict_eq(req.files['test'].filename, u'test.txt')
     strict_eq(req.files['test'].read(), b'test contents')
+
+
+def test_environ_builder_data():
+    b = EnvironBuilder(data='foo')
+    assert b.input_stream.getvalue() == b'foo'
+    b = EnvironBuilder(data=b'foo')
+    assert b.input_stream.getvalue() == b'foo'
+
+    b = EnvironBuilder(data={'foo': 'bar'})
+    assert b.form['foo'] == 'bar'
+    b = EnvironBuilder(data={'foo': ['bar1', 'bar2']})
+    assert b.form.getlist('foo') == ['bar1', 'bar2']
+
+    def check_list_content(b, length):
+        l = b.files.getlist('foo')
+        assert len(l) == length
+        for obj in l:
+            assert isinstance(obj, FileStorage)
+
+    b = EnvironBuilder(data={'foo': BytesIO()})
+    check_list_content(b, 1)
+    b = EnvironBuilder(data={'foo': [BytesIO(), BytesIO()]})
+    check_list_content(b, 2)
+
+    b = EnvironBuilder(data={'foo': (BytesIO(),)})
+    check_list_content(b, 1)
+    b = EnvironBuilder(data={'foo': [(BytesIO(),), (BytesIO(),)]})
+    check_list_content(b, 2)
 
 
 def test_environ_builder_headers():
@@ -335,6 +364,24 @@ def test_follow_redirect():
     resp = c.get('/first/request', follow_redirects=True)
     strict_eq(resp.status_code, 200)
     strict_eq(resp.data, b'current url: http://localhost/some/redirect/')
+
+
+def test_follow_local_redirect():
+    class LocalResponse(BaseResponse):
+        autocorrect_location_header = False
+
+    def local_redirect_app(environ, start_response):
+        req = Request(environ)
+        if '/from/location' in req.url:
+            response = redirect('/to/location', Response=LocalResponse)
+        else:
+            response = Response('current path: %s' % req.path)
+        return response(environ, start_response)
+
+    c = Client(local_redirect_app, response_wrapper=BaseResponse)
+    resp = c.get('/from/location', follow_redirects=True)
+    strict_eq(resp.status_code, 200)
+    strict_eq(resp.data, b'current path: /to/location')
 
 
 def test_follow_redirect_with_post_307():
@@ -590,3 +637,15 @@ def test_delete_requests_with_form():
     client = Client(test_app, Response)
     resp = client.delete('/', data={'x': 42})
     strict_eq(resp.data, b'42')
+
+
+def test_post_with_file_descriptor(tmpdir):
+    c = Client(Response(), response_wrapper=Response)
+    f = tmpdir.join('some-file.txt')
+    f.write('foo')
+    with open(f.strpath, mode='rt') as data:
+        resp = c.post('/', data=data)
+    strict_eq(resp.status_code, 200)
+    with open(f.strpath, mode='rb') as data:
+        resp = c.post('/', data=data)
+    strict_eq(resp.status_code, 200)

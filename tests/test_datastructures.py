@@ -362,6 +362,24 @@ class TestMultiDict(_MutableMultiDictTests):
         with pytest.raises(KeyError):
             d.pop('foos')
 
+    def test_multidict_pop_raise_badrequestkeyerror_for_empty_list_value(self):
+        mapping = [('a', 'b'), ('a', 'c')]
+        md = self.storage_class(mapping)
+
+        md.setlistdefault('empty', [])
+
+        with pytest.raises(KeyError):
+            md.pop('empty')
+
+    def test_multidict_popitem_raise_badrequestkeyerror_for_empty_list_value(self):
+        mapping = []
+        md = self.storage_class(mapping)
+
+        md.setlistdefault('empty', [])
+
+        with pytest.raises(KeyError):
+            md.popitem()
+
     def test_setlistdefault(self):
         md = self.storage_class()
         assert md.setlistdefault('u', [-1, -2]) == [-1, -2]
@@ -376,6 +394,47 @@ class TestMultiDict(_MutableMultiDictTests):
         assert list(zip(md, iterlistvalues(md))) == list(iterlists(md))
         assert list(zip(iterkeys(md), iterlistvalues(md))) == \
             list(iterlists(md))
+
+    @pytest.mark.skipif(not PY2, reason='viewmethods work only for the 2-nd version.')
+    def test_view_methods(self):
+        mapping = [('a', 'b'), ('a', 'c')]
+        md = self.storage_class(mapping)
+
+        vi = md.viewitems()
+        vk = md.viewkeys()
+        vv = md.viewvalues()
+
+        assert list(vi) == list(md.items())
+        assert list(vk) == list(md.keys())
+        assert list(vv) == list(md.values())
+
+        md['k'] = 'n'
+
+        assert list(vi) == list(md.items())
+        assert list(vk) == list(md.keys())
+        assert list(vv) == list(md.values())
+
+    @pytest.mark.skipif(not PY2, reason='viewmethods work only for the 2-nd version.')
+    def test_viewitems_with_multi(self):
+        mapping = [('a', 'b'), ('a', 'c')]
+        md = self.storage_class(mapping)
+
+        vi = md.viewitems(multi=True)
+
+        assert list(vi) == list(md.items(multi=True))
+
+        md['k'] = 'n'
+
+        assert list(vi) == list(md.items(multi=True))
+
+    def test_getitem_raise_badrequestkeyerror_for_empty_list_value(self):
+        mapping = [('a', 'b'), ('a', 'c')]
+        md = self.storage_class(mapping)
+
+        md.setlistdefault('empty', [])
+
+        with pytest.raises(KeyError):
+            md['empty']
 
 
 class TestOrderedMultiDict(_MutableMultiDictTests):
@@ -466,6 +525,11 @@ class TestOrderedMultiDict(_MutableMultiDictTests):
 
         with pytest.raises(BadRequestKeyError):
             d.popitemlist()
+
+        # Unhashable
+        d = self.storage_class()
+        d.add('foo', 23)
+        pytest.raises(TypeError, hash, d)
 
     def test_iterables(self):
         a = datastructures.MultiDict((("key_a", "value_a"),))

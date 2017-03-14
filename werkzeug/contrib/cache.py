@@ -229,6 +229,7 @@ class BaseCache(object):
     def clear(self):
         """Clears the cache.  Keep in mind that not all caches support
         completely clearing the cache.
+
         :returns: Whether the cache has been cleared.
         :rtype: boolean
         """
@@ -722,8 +723,8 @@ class FileSystemCache(BaseCache):
         entries = self._list_dir()
         if len(entries) > self._threshold:
             now = time()
-            try:
-                for idx, fname in enumerate(entries):
+            for idx, fname in enumerate(entries):
+                try:
                     remove = False
                     with open(fname, 'rb') as f:
                         expires = pickle.load(f)
@@ -731,8 +732,8 @@ class FileSystemCache(BaseCache):
 
                     if remove:
                         os.remove(fname)
-            except (IOError, OSError):
-                pass
+                except (IOError, OSError):
+                    pass
 
     def clear(self):
         for fname in self._list_dir():

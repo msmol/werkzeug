@@ -21,7 +21,7 @@ from werkzeug.test import create_environ, Client
 from werkzeug.wrappers import Request, Response
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.datastructures import MultiDict
-from werkzeug.formparser import parse_form_data
+from werkzeug.formparser import parse_form_data, FormDataParser
 from werkzeug._compat import BytesIO
 
 
@@ -182,6 +182,16 @@ class TestFormParser(object):
         strict_eq(('foo', 'test.txt'), req.files['one'][1][1:])
         strict_eq('cont', req.files['two'][0])
         strict_eq(data, req.files['two'][1])
+
+    def test_parse_bad_content_type(self):
+        parser = FormDataParser()
+        assert parser.parse('', 'bad-mime-type', 0) == \
+            ('', MultiDict([]), MultiDict([]))
+
+    def test_parse_from_environ(self):
+        parser = FormDataParser()
+        stream, _, _ = parser.parse_from_environ({'wsgi.input': ''})
+        assert stream is not None
 
 
 class TestMultiPart(object):
@@ -397,6 +407,24 @@ class TestMultiPart(object):
         assert rv == b''
         assert form == MultiDict()
         assert files == MultiDict()
+
+
+class TestMultiPartParser(object):
+
+    def test_constructor_not_pass_stream_factory_and_cls(self):
+        parser = formparser.MultiPartParser()
+
+        assert parser.stream_factory is formparser.default_stream_factory
+        assert parser.cls is MultiDict
+
+    def test_constructor_pass_stream_factory_and_cls(self):
+        def stream_factory():
+            pass
+
+        parser = formparser.MultiPartParser(stream_factory=stream_factory, cls=dict)
+
+        assert parser.stream_factory is stream_factory
+        assert parser.cls is dict
 
 
 class TestInternalFunctions(object):
